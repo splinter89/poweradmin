@@ -1501,7 +1501,7 @@ function order_domain_results($domains, $sortby) {
                 unset($domains[$key]);
                 break;
             default:
-                continue;
+                //
         }
     }
 
@@ -2123,6 +2123,16 @@ function get_records_by_domain_id($db, $domain_id) {
     return $records;
 }
 
+function get_ips($db) {
+    $query = "SELECT DISTINCT content FROM records WHERE type = 'A'";
+    $result = $db->query($query);
+
+    $ips = [];
+    while ($zone_records = $result->fetchRow()) {
+        $ips[] = $zone_records['content'];
+    }
+    return $ips;
+}
 
 /** Set timezone (required for PHP5)
  *
