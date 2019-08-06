@@ -3,35 +3,58 @@
 require_once "inc/toolkit.inc.php";
 
 require "inc/header.inc.php";
+echo "<script type=\"text/javascript\" src=\"inc/helper.js\"></script>";
 
 $zone_master_add = (bool)do_hook('verify_permission', 'zone_master_add');
 
 if (isset($_POST['submit_btn']) && $zone_master_add) {
-
-    $new_ips = explode("\n", str_replace(["\r\n", "\r", "\n"], "\n", $_POST['new_ips']));
-    $new_ips = array_filter(array_map('trim', $new_ips));
-    $new_ips = array_filter($new_ips, function ($ip) {
-        return filter_var($ip, FILTER_VALIDATE_IP);
-    });
-
-    $zone_name = $_POST['zone_name'];
     $record_name = $_POST['record_name'];
     if (empty($_POST['ips'])) {
         $_POST['ips'] = [];
     }
-    $ips = array_merge($_POST['ips'], $new_ips);
-
-    $zones = get_zones('all');
-    $zone = $zones[$zone_name];
-    $all_records = get_records_by_domain_id($db, $zone['id']);
-    $type = 'A';
-    $records = array_filter($all_records, function ($record) use ($type) {
-        return ($record['type'] === $type) && ($record['name'] === $_POST['record_name']);
+    $new_ips = array_filter(array_filter(array_map('trim',
+        explode("\n", str_replace(["\r\n", "\r", "\n"], "\n", $_POST['new_ips']))
+    )), function ($ip) {
+        return filter_var($ip, FILTER_VALIDATE_IP);
     });
-    $existing_ips = array_column($records, 'content');
-    $name = substr($record_name, 0, strpos($record_name, '.'.$zone_name));
+    $ips = array_unique(array_merge($_POST['ips'], $new_ips));
     $priority = (int)$_POST['priority'];
     $ttl = (int)$_POST['ttl'];
+
+    // try to find domain_id by record_name
+    list($records_by_id) = get_info_for_bulk_edit();
+    $domain_id = '';
+    foreach ($records_by_id as $record) {
+        if ($record['name'] != $record_name) continue;
+
+        if (!empty($domain_id) && ($domain_id != $record['domain_id'])) {
+            error('Found records with the given name that belong to multiple zones');
+            die;
+        }
+
+        $domain_id = $record['domain_id'];
+    }
+    if (empty($domain_id)) {
+        error('No records found with the given name');
+        die;
+    }
+    $zones_by_name = get_zones('all');
+    $zones_by_id = array_column($zones_by_name, null, 'id');
+    if (empty($zones_by_id[$domain_id])) {
+        error('Zone not found');
+        die;
+    }
+    $zone = $zones_by_id[$domain_id];
+    unset($zones_by_name);
+    unset($zones_by_id);
+
+    $type = 'A';
+    $records = array_filter($records_by_id, function ($record) use ($domain_id, $record_name) {
+        return ($record['domain_id'] == $domain_id)
+            && ($record['name'] == $record_name);
+    });
+    $existing_ips = array_unique(array_column($records, 'content'));
+    $name = substr($record_name, 0, strpos($record_name, '.'.$zone['name']));
 
     $ips_to_add = array_diff($ips, $existing_ips);
     $ips_to_remove = array_diff($existing_ips, $ips);
@@ -47,7 +70,7 @@ if (isset($_POST['submit_btn']) && $zone_master_add) {
 
     foreach ($ips_to_remove as $ip) {
         foreach ($records as $record) {
-            if ($record['content'] !== $ip) continue;
+            if ($record['content'] != $ip) continue;
 
             $record_info = get_record_from_id($record['id']);
             if (delete_record($record['id'])) {
@@ -69,9 +92,9 @@ if (isset($_POST['submit_btn']) && $zone_master_add) {
 
     update_soa_serial($zone['id']);
 } else {
-    if (empty($_POST['zone_name'])) {
-        $_POST['zone_name'] = '';
-        $_POST['record_name'] = '';
+    $_POST['selected_domain_id'] = (!empty($_POST['selected_domain_id'])) ? (int)$_POST['selected_domain_id'] : 0;
+    if (empty($_POST['selected_ip'])) {
+        $_POST['selected_ip'] = '';
     }
     if (empty($_POST['record_name'])) {
         $_POST['record_name'] = '';
@@ -88,50 +111,62 @@ if (!$zone_master_add) {
 } else {
     echo "     <h2>"._('Bulk edit')."</h2>";
 
-    $zones = get_zones('all');
-    $ips = get_ips($db);
+    $zones_by_name = get_zones('all');
+    $zone_names_by_id = array_column($zones_by_name, 'name', 'id');
+    unset($zones_by_name);
+    asort($zone_names_by_id);
 
-    if (!empty($_POST['zone_name'])) {
-        $all_records = get_records_by_domain_id($db, $zones[$_POST['zone_name']]['id']);
-        $records = array_filter($all_records, function ($record) {
-            return $record['type'] === 'A';
-        });
+    list($records_by_id, $records_by_domain_id, $records_by_ip) = get_info_for_bulk_edit();
 
-        $record_names = array_unique(array_column($records, 'name'));
-        $record_ips_by_name = [];
-        foreach ($records as $record) {
-            if (empty($record_ips_by_name[$record['name']])) {
-                $record_ips_by_name[$record['name']] = [];
-            }
-            $record_ips_by_name[$record['name']][] = $record['content'];
-        }
-        $record_ips_by_name = array_map('array_unique', $record_ips_by_name);
+    if (!empty($_POST['selected_domain_id']) && isset($records_by_domain_id[$_POST['selected_domain_id']])) {
+        $selected_records = $records_by_domain_id[$_POST['selected_domain_id']];
+    } elseif (!empty($_POST['selected_ip']) && isset($records_by_ip[$_POST['selected_ip']])) {
+        $selected_records = $records_by_ip[$_POST['selected_ip']];
     } else {
-        $record_names = [];
-        $record_ips_by_name = [];
+        $selected_records = $records_by_id; // all
     }
+
+    $record_names = array_unique(array_column($selected_records, 'name'));
+    sort($record_names);
+
+    $ips_by_record_name = array_fill_keys($record_names, []);
+    foreach ($records_by_ip as $ip => $records) {
+        foreach ($records as $record) {
+            $ips_by_record_name[$record['name']][] = $ip;
+        }
+    }
+    $ips_by_record_name = array_map('array_unique', $ips_by_record_name);
 
     echo "     <form method=\"post\" action=\"bulk_edit.php\">";
     echo "      <table>";
     echo "       <tr>";
-    echo "        <td class=\"n\" width=\"100\">"._('Zone').":</td>";
+    echo "        <td class=\"n\" width=\"100\">"._('Filter').":</td>";
     echo "        <td class=\"n\">";
-    echo "         <select name=\"zone_name\" onchange=\"this.form.record_name.value=''; this.form.submit();\">";
-    echo "          <option value=\"\">none</option>";
-    foreach ($zones as $zone) {
-        echo "          <option value=\"".$zone['name']."\" ".($zone['name'] === $_POST['zone_name'] ? 'selected' : '').">".$zone['name']."</option>";
+    echo "         <select name=\"selected_domain_id\" onchange=\"this.form.selected_ip.value=''; this.form.record_name.value=''; this.form.submit();\">";
+    echo "          <option value=\"\">all zones</option>";
+    foreach ($zone_names_by_id as $domain_id => $name) {
+        $cnt = count(array_unique(array_column($records_by_domain_id[$domain_id], 'name')));
+        echo "          <option value=\"$domain_id\" ".($domain_id == $_POST['selected_domain_id'] ? 'selected' : '').">$name ($cnt)</option>";
+    }
+    echo "         </select>";
+    echo " and ";
+    echo "         <select name=\"selected_ip\" onchange=\"this.form.selected_domain_id.value=''; this.form.record_name.value=''; this.form.submit();\">";
+    echo "          <option value=\"\">all IPs</option>";
+    foreach ($records_by_ip as $ip => $records) {
+        $cnt = count(array_unique(array_column($records, 'name')));
+        echo "          <option value=\"$ip\" ".($ip == $_POST['selected_ip'] ? 'selected' : '').">$ip ($cnt)</option>";
     }
     echo "         </select>";
     echo "        </td>";
     echo "       </tr>";
 
     echo "       <tr>";
-    echo "        <td class=\"n\" width=\"100\">"._('Record').":</td>";
+    echo "        <td class=\"n\" width=\"100\">"._('Record name').":</td>";
     echo "        <td class=\"n\">";
-    echo "         <select name=\"record_name\" ".(empty($_POST['zone_name']) ? 'disabled="disabled"' : '')." onchange=\"this.form.submit();\">";
+    echo "         <select name=\"record_name\" onchange=\"this.form.submit();\">";
     echo "          <option value=\"\">none</option>";
     foreach ($record_names as $record_name) {
-        echo "          <option value=\"".$record_name."\" ".($record_name === $_POST['record_name'] ? 'selected' : '').">".$record_name."</option>";
+        echo "          <option value=\"".$record_name."\" ".($record_name == $_POST['record_name'] ? 'selected' : '').">".$record_name."</option>";
     }
     echo "         </select>";
     echo "        </td>";
@@ -140,11 +175,18 @@ if (!$zone_master_add) {
     echo "       <tr>";
     echo "        <td class=\"n\">"._('IPs').":</td>";
     echo "        <td class=\"n\">";
-    foreach ($ips as $ip) {
+    foreach (array_keys($records_by_ip) as $ip) {
         echo '<label><input type="checkbox" name="ips[]" value="'.$ip.'" '
-            .(!empty($_POST['record_name']) && !empty($record_ips_by_name[$_POST['record_name']]) && in_array($ip, $record_ips_by_name[$_POST['record_name']]) ? 'checked="checked"' : '')
-            .(empty($_POST['record_name']) ? 'disabled="disabled"' : '').'>'.$ip.'</label><br>';
+            .(empty($_POST['record_name']) ? 'disabled="disabled"' : '')
+            .(!empty($_POST['record_name']) && !empty($ips_by_record_name[$_POST['record_name']]) && in_array($ip, $ips_by_record_name[$_POST['record_name']]) ? 'checked="checked"' : '')
+            .'>'.$ip.'</label><br>';
     }
+    echo "<input type=\"button\" onclick=\"checkBulkEditIPs(true);\" value=\"select all\""
+        .(empty($_POST['record_name']) ? 'disabled="disabled"' : '')
+        ."/>";
+    echo "<input type=\"button\" onclick=\"checkBulkEditIPs(false);\" value=\"none\" "
+        .(empty($_POST['record_name']) ? 'disabled="disabled"' : '')
+        ."/>";
     echo "        </td>";
     echo "       </tr>";
 

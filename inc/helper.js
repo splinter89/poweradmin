@@ -146,3 +146,14 @@ function checkDomainFilled() {
 
     add_zone_master.submit();
 }
+
+function checkBulkEditIPs(checked) {
+    var checkboxes = document.querySelectorAll('[name="ips[]"]');
+    var i;
+
+    checked = !!checked; // bool
+
+    for (i = 0; i < checkboxes.length; i += 1) {
+        checkboxes[i].checked = checked;
+    }
+}

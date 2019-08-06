@@ -2123,15 +2123,33 @@ function get_records_by_domain_id($db, $domain_id) {
     return $records;
 }
 
-function get_ips($db) {
-    $query = "SELECT DISTINCT content FROM records WHERE type = 'A'";
+function get_info_for_bulk_edit() {
+    global $db;
+
+    $query = "select * from records where type = 'A' and (disabled is null or disabled = 0)";
     $result = $db->query($query);
 
-    $ips = [];
-    while ($zone_records = $result->fetchRow()) {
-        $ips[] = $zone_records['content'];
+    $records_by_id = [];
+    $records_by_domain_id = [];
+    $records_by_ip = [];
+    while ($record = $result->fetchRow()) {
+        $id = $record['id'];
+        $domain_id = $record['domain_id'];
+        $ip = $record['content'];
+
+        if (empty($records_by_domain_id[$domain_id])) {
+            $records_by_domain_id[$domain_id] = [];
+        }
+        if (empty($records_by_ip[$ip])) {
+            $records_by_ip[$ip] = [];
+        }
+
+        $records_by_id[$id] = $record;
+        $records_by_domain_id[$domain_id][] = $record;
+        $records_by_ip[$ip][] = $record;
     }
-    return $ips;
+    ksort($records_by_ip);
+    return [$records_by_id, $records_by_domain_id, $records_by_ip];
 }
 
 /** Set timezone (required for PHP5)
