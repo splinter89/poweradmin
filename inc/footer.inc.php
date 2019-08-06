@@ -38,6 +38,7 @@ if (is_object($db)) {
 }
 ?>
 </div> <!-- /content -->
+
 <div class="footer">
     <a href="http://www.poweradmin.org/">a complete(r) <strong>poweradmin</strong><?php
         if (isset($_SESSION["userid"])) {
@@ -45,27 +46,24 @@ if (is_object($db)) {
         }
         ?></a> - <a href="http://www.poweradmin.org/credits.html">credits</a>
 </div>
+
 <?php
 if (file_exists('inc/custom_footer.inc.php')) {
     include('inc/custom_footer.inc.php');
 }
-?>
-</body>
-</html>
 
-<?php
 if (isset($db_debug) && $db_debug == true) {
-    $debug = $db->getDebugOutput();
-    $debug = str_replace("query(1)", "", $debug);
-    $lines = explode(":", $debug);
+    $lines = $db->getDebugOutput();
 
     foreach ($lines as $line) {
-        echo "$line<br>";
+        echo "<p>$line</p>";
     }
 }
-?>
 
-<?php
 global $display_stats;
 if ($display_stats)
     display_current_stats();
+?>
+
+</body>
+</html>

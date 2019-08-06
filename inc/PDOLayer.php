@@ -113,10 +113,10 @@ class PDOLayer extends PDOCommon {
     /**
      * Return debug output
      *
-     * @param string Debug output
+     * @return array
      */
     public function getDebugOutput() {
-        echo join("<br>", $this->queries);
+        return $this->queries;
     }
 
     /**
